@@ -1,11 +1,10 @@
 import express from "express";
+import fs from "fs";
+import dotenv from "dotenv";
 import http from "http";
 import { Server } from "socket.io";
-import path from "path";
-import { fileURLToPath } from "url";
-import fs from "fs";
 import session from "express-session";
-import dotenv from "dotenv";
+import TelegramBot from "node-telegram-bot-api";
 
 dotenv.config();
 
@@ -13,34 +12,33 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
 app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.static("public"));
+
+// session middleware
 app.use(
   session({
-    secret: process.env.SESSION_SECRET || "secret",
+    secret: process.env.SESSION_SECRET || "supersecret",
     resave: false,
-    saveUninitialized: true,
+    saveUninitialized: false,
+    cookie: { maxAge: 1000 * 60 * 60 * 24 }, // 1 day
   })
 );
 
-app.use(express.static(path.join(__dirname, "public")));
-
-// ------------------- KEYS -------------------
-const KEYS_FILE = path.join(__dirname, "keys.json");
-
+/* -------------------- KEYS -------------------- */
+const KEYS_FILE = "./keys.json";
 function loadKeys() {
   if (!fs.existsSync(KEYS_FILE)) return {};
-  return JSON.parse(fs.readFileSync(KEYS_FILE, "utf8"));
+  return JSON.parse(fs.readFileSync(KEYS_FILE, "utf-8"));
 }
-
 function saveKeys(keys) {
   fs.writeFileSync(KEYS_FILE, JSON.stringify(keys, null, 2));
 }
+function generateKey() {
+  return Math.random().toString(36).substring(2, 10).toUpperCase();
+}
 
-// ------------------- VERIFY -------------------
+/* -------------------- VERIFY LOGIN -------------------- */
 app.post("/verify", (req, res) => {
   const { key, username } = req.body;
   const keys = loadKeys();
@@ -49,76 +47,126 @@ app.post("/verify", (req, res) => {
     keys[key].used = true;
     saveKeys(keys);
 
-    // Store user in session
-    req.session.user = { username: username || "User" };
+    req.session.user = {
+      username: username || keys[key].user || "User",
+    };
 
-    return res.json({ success: true });
+    return res.json({ success: true, username: req.session.user.username });
   }
   return res.status(400).json({ success: false, message: "Invalid key" });
 });
 
-// ------------------- SESSION -------------------
+/* -------------------- SESSION CHECK -------------------- */
 app.get("/session", (req, res) => {
   if (req.session.user) {
     return res.json({ loggedIn: true, user: req.session.user });
   }
-  res.json({ loggedIn: false });
+  return res.json({ loggedIn: false });
 });
 
-// ------------------- PANEL -------------------
-app.get("/panel", (req, res) => {
-  res.sendFile(path.join(__dirname, "public", "panel.html"));
-});
-
-// ------------------- ANNOUNCEMENTS -------------------
-let latestAnnouncement = "Welcome to the panel! Stay tuned for updates...";
-
-app.get("/announcement", (req, res) => {
-  res.json({ text: latestAnnouncement });
-});
-
-app.post("/announce", (req, res) => {
-  const { text } = req.body;
-  if (text) {
-    latestAnnouncement = text;
-    io.emit("announcement", text);
-    return res.json({ success: true });
-  }
-  res.status(400).json({ success: false });
-});
-
-// ------------------- CHAT -------------------
-let chatHistory = [];
+/* -------------------- CHAT -------------------- */
+const MESSAGES_MAX = 200;
+const messages = [];
 
 io.on("connection", (socket) => {
-  console.log("New client connected");
+  console.log("🟢 User connected");
 
-  // Send chat history
-  socket.emit("init", chatHistory);
-
-  // Handle join
   socket.on("join", ({ username }) => {
-    socket.username = username || "User";
+    socket.data.username = username || "User";
+    socket.emit("init", messages);
   });
 
-  // Handle message
   socket.on("message", (text) => {
+    const clean = (text || "").toString().slice(0, 2000);
+    if (!clean.trim()) return;
+
     const msg = {
-      user: socket.username,
-      text,
-      time: new Date().toLocaleTimeString(),
+      id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+      user: socket.data.username || "User",
+      text: clean,
+      time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
     };
-    chatHistory.push(msg);
+
+    messages.push(msg);
+    if (messages.length > MESSAGES_MAX) messages.shift();
+
     io.emit("message", msg);
   });
 
   socket.on("disconnect", () => {
-    console.log("Client disconnected");
+    console.log("🔴 User disconnected");
   });
 });
 
-// ------------------- START -------------------
+/* -------------------- ANNOUNCEMENTS -------------------- */
+let latestAnnouncement = "";
+app.get("/announcement", (req, res) => {
+  res.json({ text: latestAnnouncement });
+});
+function setAnnouncement(text) {
+  latestAnnouncement = text;
+  io.emit("announcement", text);
+}
+
+/* -------------------- TELEGRAM BOT -------------------- */
+const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, { polling: true });
+
+bot.onText(/\/start/, (msg) => {
+  const chatId = msg.chat.id;
+  const info = `
+👋 Hello *${msg.from.first_name}!*
+
+📌 *Your Telegram Info*
+━━━━━━━━━━━━━━
+🆔 ID: \`${msg.from.id}\`
+👤 Username: @${msg.from.username || "N/A"}
+📛 Name: ${msg.from.first_name} ${msg.from.last_name || ""}
+
+Press the button below to generate your 1-time login key.
+`;
+
+  bot.sendMessage(chatId, info, {
+    parse_mode: "Markdown",
+    reply_markup: {
+      inline_keyboard: [[{ text: "🔑 Generate Key", callback_data: "generate_key" }]],
+    },
+  });
+});
+
+bot.on("callback_query", (query) => {
+  const chatId = query.message.chat.id;
+  if (query.data === "generate_key") {
+    const keys = loadKeys();
+    const key = generateKey();
+    keys[key] = {
+      user: query.from.username || query.from.first_name,
+      used: false,
+    };
+    saveKeys(keys);
+
+    bot.sendMessage(
+      chatId,
+      `✅ Here is your 1-time key:\n\`\`\`\n${key}\n\`\`\`\nUse it on the website to login.`,
+      { parse_mode: "Markdown" }
+    );
+  }
+});
+
+bot.onText(/\/announce (.+)/, (msg, match) => {
+  const chatId = msg.chat.id.toString();
+  const adminId = process.env.TELEGRAM_ADMIN_ID;
+
+  if (chatId === adminId) {
+    const announcement = match[1];
+    bot.sendMessage(chatId, `📢 Announcement sent:\n${announcement}`);
+    setAnnouncement(announcement);
+  } else {
+    bot.sendMessage(chatId, "❌ You are not authorized to send announcements.");
+  }
+});
+
+/* -------------------- START SERVER -------------------- */
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-  console.log(`✅ Server running on http://localhost:${PORT}`);
+  console.log(`✅ Server + Socket.IO running: http://localhost:${PORT}`);
 });

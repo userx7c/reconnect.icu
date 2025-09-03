@@ -14,8 +14,6 @@ const io = new Server(server);
 
 app.use(express.json());
 app.use(express.static("public"));
-
-// ✅ important for Render / proxy hosting
 app.set("trust proxy", 1);
 
 // session middleware

@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="in">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -14,7 +14,7 @@
     <img src="image/banner.jpg" alt="Banner" class="auth-banner" />
 
     <div class="auth-box">
-      <h1>Welcome</h1>
+      <H1>Welcome</H1>
       <p class="subtitle">Enter your key to access your account</p>
 
       <form id="keyForm" action="javascript:void(0);">
@@ -31,8 +31,8 @@
 
       <!-- New text under button -->
       <p class="footer-text">
-        Don’t have a key? Get one from our 
-        <a href="https://t.me/jewclans_bot" target="_blank">@jewclans_bot</a>
+        Don’t have a key? Get one through our telegram bot 
+        <a href="https://t.me/reconnectx_bot" target="_blank">@reconnect</a>
       </p>
     </div>
   </div>
@@ -48,7 +48,7 @@
   async function checkSession() {
     const res = await fetch("/session");
     const data = await res.json();
-    if (data.loggedIn) {
+    if (data.loggedin) {
       window.location.href = "/panel.html";
     }
   }
@@ -76,3 +76,4 @@
 
 </body>
 </html>
+

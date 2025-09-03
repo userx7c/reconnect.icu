@@ -19,7 +19,7 @@ app.use(express.static("public"));
 app.use(
   session({
     secret: process.env.SESSION_SECRET || "supersecret",
-    resave: false,
+    RESAVE: false,
     saveUninitialized: false,
     cookie: { maxAge: 1000 * 60 * 60 * 24 }, // 1 day
   })
@@ -27,9 +27,14 @@ app.use(
 
 /* -------------------- KEYS -------------------- */
 const KEYS_FILE = "./keys.json";
+
 function loadKeys() {
   if (!fs.existsSync(KEYS_FILE)) return {};
-  return JSON.parse(fs.readFileSync(KEYS_FILE, "utf-8"));
+  try {
+    return JSON.parse(fs.readFileSync(KEYS_FILE, "utf-8"));
+  } catch {
+    return {};
+  }
 }
 function saveKeys(keys) {
   fs.writeFileSync(KEYS_FILE, JSON.stringify(keys, null, 2));
@@ -44,24 +49,29 @@ app.post("/verify", (req, res) => {
   const keys = loadKeys();
 
   if (keys[key] && keys[key].used === false) {
+    // ✅ mark key as used
     keys[key].used = true;
+    if (username) keys[key].user = username;
     saveKeys(keys);
 
+    // ✅ store in session
     req.session.user = {
       username: username || keys[key].user || "User",
     };
 
     return res.json({ success: true, username: req.session.user.username });
   }
+
   return res.status(400).json({ success: false, message: "Invalid key" });
 });
+
 
 /* -------------------- SESSION CHECK -------------------- */
 app.get("/session", (req, res) => {
   if (req.session.user) {
-    return res.json({ loggedIn: true, user: req.session.user });
+    return res.json({ loggedin: true, user: req.session.user });
   }
-  return res.json({ loggedIn: false });
+  return res.json({ loggedin: false });
 });
 
 /* -------------------- CHAT -------------------- */
@@ -170,3 +180,4 @@ const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`✅ Server + Socket.IO running: http://localhost:${PORT}`);
 });
+

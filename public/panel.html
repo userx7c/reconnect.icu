@@ -117,7 +117,7 @@
     <!-- Announcements -->
     <div class="announcements">
       <h2>📢 Announcements</h2>
-      <p id="announcement-text">Welcome to the panel! Stay tuned for updates...</p>
+      <p id="announcement-text">Loading...</p>
     </div>
 
     <!-- Chatbox -->
@@ -141,30 +141,31 @@
   const sendBtn = document.getElementById('send-btn');
   const announcementText = document.getElementById('announcement-text');
 
-  // Get username from URL ?u=... or localStorage
-  const params = new URLSearchParams(window.location.search);
-  const username = params.get("u") || localStorage.getItem("username") || "User";
-  localStorage.setItem("username", username);
+  // ------------------- LOAD SESSION -------------------
+  fetch("/session")
+    .then(res => res.json())
+    .then(data => {
+      if (data.loggedIn) {
+        const username = data.user.username;
+        localStorage.setItem("username", username);
+        socket.emit("join", { username });
+      } else {
+        window.location.href = "/";
+      }
+    });
 
-  // Join with username
-  socket.emit('join', { username });
-
-  // Init with chat history
+  // ------------------- CHAT -------------------
   socket.on('init', (messages) => {
     chatMessages.innerHTML = '';
-    messages.forEach((msg) => {
-      addMessage(msg.user, msg.text, msg.time);
-    });
+    messages.forEach((msg) => addMessage(msg.user, msg.text, msg.time));
     chatMessages.scrollTop = chatMessages.scrollHeight;
   });
 
-  // Receive new messages
   socket.on('message', (msg) => {
     addMessage(msg.user, msg.text, msg.time);
     chatMessages.scrollTop = chatMessages.scrollHeight;
   });
 
-  // Add message helper
   function addMessage(user, text, time) {
     const div = document.createElement('div');
     div.classList.add('chat-message');
@@ -172,34 +173,22 @@
     chatMessages.appendChild(div);
   }
 
-  // Send message with username
   sendBtn.addEventListener('click', () => {
     if (chatInput.value.trim()) {
-      socket.emit('message', {
-        user: username,
-        text: chatInput.value.trim()
-      });
+      socket.emit('message', chatInput.value);
       chatInput.value = '';
     }
   });
 
-  // Load latest announcement on page load
+  // ------------------- ANNOUNCEMENTS -------------------
   fetch("/announcement")
     .then(res => res.json())
     .then(data => {
-      if (data.text) {
-        announcementText.textContent = data.text;
-      }
+      if (data.text) announcementText.textContent = data.text;
     });
 
-  // Listen for live announcements
-  socket.on('announcement', (text) => {
+  socket.on("announcement", (text) => {
     announcementText.textContent = text;
-
-    app.get("/panel", (req, res) => {
-  res.sendFile("panel.html", { root: "public" });
-});
-
   });
 </script>
 </body>

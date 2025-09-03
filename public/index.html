@@ -1,80 +1,110 @@
 <!DOCTYPE html>
-<html lang="in">
+<html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>reconnect.icu</title>
-  <link rel="stylesheet" href="style.css" />
+  <meta charset="UTF-8">
+  <title>Panel</title>
+  <style>
+    body { font-family: sans-serif; margin: 20px; }
+    .hidden { display: none; }
+    .chat-box { border: 1px solid #ccc; padding: 10px; height: 300px; overflow-y: auto; margin-bottom: 10px; }
+  </style>
 </head>
 <body>
-  <!-- Fancy Glassmorphic Auth Box -->
-  <div class="auth-container">
-
-    <!-- Banner Image (outside the box) -->
-    <img src="image/banner.jpg" alt="Banner" class="auth-banner" />
-
-    <div class="auth-box">
-      <H1>Welcome</H1>
-      <p class="subtitle">Enter your key to access your account</p>
-
-      <form id="keyForm" action="javascript:void(0);">
-  <div class="input-group">
-    <input type="text" name="key" placeholder="Enter your key" required />
-  </div>
-<div class="input-group">
-  <input type="text" id="username" placeholder="Enter username" required>
-</div>
-
-
-        <button type="submit" class="submit-btn">Continue →</button>
-      </form>
-
-      <!-- New text under button -->
-      <p class="footer-text">
-        Don’t have a key? Get one through our telegram bot 
-        <a href="https://t.me/reconnectx_bot" target="_blank">@reconnect</a>
-      </p>
-    </div>
+  <!-- Login -->
+  <div id="login-section">
+    <h2>Login</h2>
+    <input type="text" id="username" placeholder="Username" required>
+    <input type="text" id="key" placeholder="Key" required>
+    <button id="login-btn">Login</button>
+    <p id="error" style="color:red;"></p>
   </div>
 
-  <!-- Loader -->
-  <div class="loader" id="loader">
-    <div class="spinner"></div>
+  <!-- Panel -->
+  <div id="panel-section" class="hidden">
+    <h2>📢 Announcements</h2>
+    <p id="announcement-text">Loading...</p>
+
+    <div class="chat-box" id="chat-messages"></div>
+    <input type="text" id="chat-input" placeholder="Type a message">
+    <button id="send-btn">Send</button>
   </div>
 
-  <script src="script.js"></script>
+<script src="/socket.io/socket.io.js"></script>
+<script>
+const loginSection = document.getElementById("login-section");
+const panelSection = document.getElementById("panel-section");
+const errorEl = document.getElementById("error");
 
-  <script>
-  async function checkSession() {
-    const res = await fetch("/session");
-    const data = await res.json();
-    if (data.loggedin) {
-      window.location.href = "/panel.html";
-    }
+const socket = io();
+const chatMessages = document.getElementById("chat-messages");
+const chatInput = document.getElementById("chat-input");
+const sendBtn = document.getElementById("send-btn");
+const announcementText = document.getElementById("announcement-text");
+
+function addMessage(user, text, time) {
+  const div = document.createElement("div");
+  div.innerHTML = `<b>${user}</b>: ${text} <small>(${time})</small>`;
+  chatMessages.appendChild(div);
+  chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+// login handler
+document.getElementById("login-btn").addEventListener("click", async () => {
+  const username = document.getElementById("username").value.trim();
+  const key = document.getElementById("key").value.trim();
+
+  const res = await fetch("/verify", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ key, username }),
+  });
+  const data = await res.json();
+
+  if (data.success) {
+    localStorage.setItem("username", data.username);
+    showPanel();
+  } else {
+    errorEl.textContent = data.message;
   }
+});
 
-  document.addEventListener("DOMContentLoaded", checkSession);
+// session check auto-login
+fetch("/session").then(r => r.json()).then(data => {
+  if (data.loggedIn) {
+    localStorage.setItem("username", data.user.username);
+    showPanel();
+  }
+});
 
-  document.getElementById("login-btn").addEventListener("click", async () => {
-    const username = document.getElementById("username").value.trim();
-    const key = document.getElementById("key").value.trim();
+function showPanel() {
+  loginSection.classList.add("hidden");
+  panelSection.classList.remove("hidden");
 
-    const res = await fetch("/verify", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ key, username }),
-    });
+  const username = localStorage.getItem("username") || "User";
+  socket.emit("join", { username });
 
-    const data = await res.json();
-    if (data.success) {
-      window.location.href = "/panel.html";
-    } else {
-      alert(data.message);
+  socket.on("init", (messages) => {
+    chatMessages.innerHTML = "";
+    messages.forEach((msg) => addMessage(msg.user, msg.text, msg.time));
+  });
+
+  socket.on("message", (msg) => addMessage(msg.user, msg.text, msg.time));
+
+  sendBtn.addEventListener("click", () => {
+    if (chatInput.value.trim()) {
+      socket.emit("message", chatInput.value);
+      chatInput.value = "";
     }
   });
-</script>
 
+  fetch("/announcement")
+    .then(res => res.json())
+    .then(data => { if (data.text) announcementText.textContent = data.text; });
+
+  socket.on("announcement", (text) => {
+    announcementText.textContent = text;
+  });
+}
+</script>
 </body>
 </html>
-
-

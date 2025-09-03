@@ -15,32 +15,31 @@ const io = new Server(server);
 app.use(express.json());
 app.use(express.static("public"));
 
+// ✅ important for Render / proxy hosting
+app.set("trust proxy", 1);
+
 // session middleware
 app.use(
   session({
     secret: process.env.SESSION_SECRET || "supersecret",
-    RESAVE: false,
+    resave: false,
     saveUninitialized: false,
-    cookie: { maxAge: 1000 * 60 * 60 * 24 }, // 1 day
+    cookie: {
+      maxAge: 1000 * 60 * 60 * 24, // 1 day
+      sameSite: "lax",
+      secure: process.env.NODE_ENV === "production",
+    },
   })
 );
 
 /* -------------------- KEYS -------------------- */
 const KEYS_FILE = "./keys.json";
-
 function loadKeys() {
   if (!fs.existsSync(KEYS_FILE)) return {};
-  try {
-    return JSON.parse(fs.readFileSync(KEYS_FILE, "utf-8"));
-  } catch {
-    return {};
-  }
+  return JSON.parse(fs.readFileSync(KEYS_FILE, "utf-8"));
 }
 function saveKeys(keys) {
   fs.writeFileSync(KEYS_FILE, JSON.stringify(keys, null, 2));
-}
-function generateKey() {
-  return Math.random().toString(36).substring(2, 10).toUpperCase();
 }
 
 /* -------------------- VERIFY LOGIN -------------------- */
@@ -49,29 +48,22 @@ app.post("/verify", (req, res) => {
   const keys = loadKeys();
 
   if (keys[key] && keys[key].used === false) {
-    // ✅ mark key as used
     keys[key].used = true;
-    if (username) keys[key].user = username;
     saveKeys(keys);
 
-    // ✅ store in session
-    req.session.user = {
-      username: username || keys[key].user || "User",
-    };
-
+    req.session.user = { username: username || keys[key].user || "User" };
     return res.json({ success: true, username: req.session.user.username });
   }
 
   return res.status(400).json({ success: false, message: "Invalid key" });
 });
 
-
 /* -------------------- SESSION CHECK -------------------- */
 app.get("/session", (req, res) => {
   if (req.session.user) {
-    return res.json({ loggedin: true, user: req.session.user });
+    return res.json({ loggedIn: true, user: req.session.user });
   }
-  return res.json({ loggedin: false });
+  return res.json({ loggedIn: false });
 });
 
 /* -------------------- CHAT -------------------- */
@@ -79,8 +71,6 @@ const MESSAGES_MAX = 200;
 const messages = [];
 
 io.on("connection", (socket) => {
-  console.log("🟢 User connected");
-
   socket.on("join", ({ username }) => {
     socket.data.username = username || "User";
     socket.emit("init", messages);
@@ -91,10 +81,13 @@ io.on("connection", (socket) => {
     if (!clean.trim()) return;
 
     const msg = {
-      id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+      id: Date.now().toString(36),
       user: socket.data.username || "User",
       text: clean,
-      time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      time: new Date().toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+      }),
     };
 
     messages.push(msg);
@@ -102,17 +95,15 @@ io.on("connection", (socket) => {
 
     io.emit("message", msg);
   });
-
-  socket.on("disconnect", () => {
-    console.log("🔴 User disconnected");
-  });
 });
 
 /* -------------------- ANNOUNCEMENTS -------------------- */
 let latestAnnouncement = "";
+
 app.get("/announcement", (req, res) => {
   res.json({ text: latestAnnouncement });
 });
+
 function setAnnouncement(text) {
   latestAnnouncement = text;
   io.emit("announcement", text);
@@ -121,24 +112,26 @@ function setAnnouncement(text) {
 /* -------------------- TELEGRAM BOT -------------------- */
 const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, { polling: true });
 
+function generateKey() {
+  return Math.random().toString(36).substring(2, 10).toUpperCase();
+}
+
 bot.onText(/\/start/, (msg) => {
   const chatId = msg.chat.id;
   const info = `
 👋 Hello *${msg.from.first_name}!*
 
-📌 *Your Telegram Info*
-━━━━━━━━━━━━━━
 🆔 ID: \`${msg.from.id}\`
 👤 Username: @${msg.from.username || "N/A"}
 📛 Name: ${msg.from.first_name} ${msg.from.last_name || ""}
-
-Press the button below to generate your 1-time login key.
-`;
+  `;
 
   bot.sendMessage(chatId, info, {
     parse_mode: "Markdown",
     reply_markup: {
-      inline_keyboard: [[{ text: "🔑 Generate Key", callback_data: "generate_key" }]],
+      inline_keyboard: [
+        [{ text: "🔑 Generate Key", callback_data: "generate_key" }],
+      ],
     },
   });
 });
@@ -146,12 +139,9 @@ Press the button below to generate your 1-time login key.
 bot.on("callback_query", (query) => {
   const chatId = query.message.chat.id;
   if (query.data === "generate_key") {
-    const keys = loadKeys();
     const key = generateKey();
-    keys[key] = {
-      user: query.from.username || query.from.first_name,
-      used: false,
-    };
+    const keys = loadKeys();
+    keys[key] = { user: query.from.username || query.from.first_name, used: false };
     saveKeys(keys);
 
     bot.sendMessage(
@@ -163,21 +153,15 @@ bot.on("callback_query", (query) => {
 });
 
 bot.onText(/\/announce (.+)/, (msg, match) => {
-  const chatId = msg.chat.id.toString();
-  const adminId = process.env.TELEGRAM_ADMIN_ID;
-
-  if (chatId === adminId) {
+  if (msg.chat.id.toString() === process.env.TELEGRAM_ADMIN_ID) {
     const announcement = match[1];
-    bot.sendMessage(chatId, `📢 Announcement sent:\n${announcement}`);
+    bot.sendMessage(msg.chat.id, `📢 Announcement sent:\n${announcement}`);
     setAnnouncement(announcement);
-  } else {
-    bot.sendMessage(chatId, "❌ You are not authorized to send announcements.");
   }
 });
 
 /* -------------------- START SERVER -------------------- */
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-  console.log(`✅ Server + Socket.IO running: http://localhost:${PORT}`);
-});
-
+server.listen(PORT, () =>
+  console.log(`✅ Server running: http://localhost:${PORT}`)
+);

@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Black Glass Auth</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <!-- Fancy Glassmorphic Auth Box -->
+  <div class="auth-container">
+
+    <!-- Banner Image (outside the box) -->
+    <img src="image/banner.jpg" alt="Banner" class="auth-banner" />
+
+    <div class="auth-box">
+      <h1>Welcome</h1>
+      <p class="subtitle">Enter your key to access your account</p>
+
+      <form id="keyForm" action="javascript:void(0);">
+  <div class="input-group">
+    <input type="text" name="key" placeholder="Enter your key" required />
+  </div>
+<div class="input-group">
+  <input type="text" id="username" placeholder="Enter username" required>
+</div>
+
+
+        <button type="submit" class="submit-btn">Continue →</button>
+      </form>
+
+      <!-- New text under button -->
+      <p class="footer-text">
+        Don’t have a key? Get one from our 
+        <a href="https://t.me/jewclans_bot" target="_blank">@jewclans_bot</a>
+      </p>
+    </div>
+  </div>
+
+  <!-- Loader -->
+  <div class="loader" id="loader">
+    <div class="spinner"></div>
+  </div>
+
+  <script src="script.js"></script>
+
+  <script>
+  async function checkSession() {
+    const res = await fetch("/session");
+    const data = await res.json();
+    if (data.loggedIn) {
+      window.location.href = "/panel.html";
+    }
+  }
+
+  document.addEventListener("DOMContentLoaded", checkSession);
+
+  document.getElementById("login-btn").addEventListener("click", async () => {
+    const username = document.getElementById("username").value.trim();
+    const key = document.getElementById("key").value.trim();
+
+    const res = await fetch("/verify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key, username }),
+    });
+
+    const data = await res.json();
+    if (data.success) {
+      window.location.href = "/panel.html";
+    } else {
+      alert(data.message);
+    }
+  });
+</script>
+
+</body>
+</html>

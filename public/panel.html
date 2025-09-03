@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Panel</title>
+  <link rel="stylesheet" href="style.css">
+  <style>
+    body {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-start;
+      padding: 40px 20px;
+    }
+
+    .panel-container {
+      width: 100%;
+      max-width: 900px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    /* Announcements box */
+    .announcements {
+      background: rgba(0,0,0,0.6);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 16px;
+      padding: 20px;
+      backdrop-filter: blur(15px);
+      box-shadow: 0 8px 30px rgba(0,0,0,0.7);
+      animation: fadeInUp 500ms ease both;
+    }
+    .announcements h2 {
+      margin-bottom: 10px;
+      font-size: 20px;
+      font-weight: 600;
+      color: #a855f7;
+    }
+    .announcements p {
+      font-size: 14px;
+      color: rgba(255,255,255,0.85);
+      line-height: 1.5;
+    }
+
+    /* Chatbox */
+    .chat-box {
+      background: rgba(0,0,0,0.6);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 16px;
+      display: flex;
+      flex-direction: column;
+      height: 500px;
+      backdrop-filter: blur(15px);
+      box-shadow: 0 8px 30px rgba(0,0,0,0.7);
+    }
+
+    .chat-header {
+      padding: 12px 16px;
+      border-bottom: 1px solid rgba(255,255,255,0.1);
+      font-weight: 600;
+      color: #fff;
+    }
+
+    .chat-messages {
+      flex: 1;
+      padding: 12px;
+      overflow-y: auto;
+      font-size: 14px;
+      color: rgba(255,255,255,0.9);
+    }
+
+    .chat-message {
+      margin-bottom: 10px;
+      padding-bottom: 8px;
+      border-bottom: 1px dashed rgba(255,255,255,0.1);
+    }
+
+    .chat-message span {
+      font-weight: bold;
+      color: #a855f7;
+    }
+
+    .chat-input {
+      display: flex;
+      padding: 12px;
+      border-top: 1px solid rgba(255,255,255,0.1);
+    }
+
+    .chat-input input {
+      flex: 1;
+      padding: 10px;
+      border-radius: 10px;
+      border: none;
+      background: rgba(255,255,255,0.05);
+      color: #fff;
+      outline: none;
+    }
+
+    .chat-input button {
+      margin-left: 10px;
+      padding: 10px 18px;
+      border: none;
+      border-radius: 10px;
+      background: linear-gradient(90deg, #6366f1, #a855f7);
+      color: #fff;
+      font-weight: 600;
+      cursor: pointer;
+      transition: filter .2s ease;
+    }
+    .chat-input button:hover { filter: brightness(1.1); }
+  </style>
+</head>
+<body>
+  <div class="panel-container">
+    
+    <!-- Announcements -->
+    <div class="announcements">
+      <h2>📢 Announcements</h2>
+      <p id="announcement-text">Welcome to the panel! Stay tuned for updates...</p>
+    </div>
+
+    <!-- Chatbox -->
+    <div class="chat-box">
+      <div class="chat-header">💬 Community Chat</div>
+      <div class="chat-messages" id="chat-messages"></div>
+      <div class="chat-input">
+        <input type="text" id="chat-input" placeholder="Type a message..." required />
+        <button id="send-btn">Send</button>
+      </div>
+    </div>
+    
+  </div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+  const socket = io();
+
+  const chatMessages = document.getElementById('chat-messages');
+  const chatInput = document.getElementById('chat-input');
+  const sendBtn = document.getElementById('send-btn');
+  const announcementText = document.getElementById('announcement-text');
+
+  // Get username from URL ?u=... or localStorage
+  const params = new URLSearchParams(window.location.search);
+  const username = params.get("u") || localStorage.getItem("username") || "User";
+  localStorage.setItem("username", username);
+
+  // Join with username
+  socket.emit('join', { username });
+
+  // Init with chat history
+  socket.on('init', (messages) => {
+    chatMessages.innerHTML = '';
+    messages.forEach((msg) => {
+      addMessage(msg.user, msg.text, msg.time);
+    });
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+  });
+
+  // Receive new messages
+  socket.on('message', (msg) => {
+    addMessage(msg.user, msg.text, msg.time);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+  });
+
+  // Add message helper
+  function addMessage(user, text, time) {
+    const div = document.createElement('div');
+    div.classList.add('chat-message');
+    div.innerHTML = `<span>${user}:</span> ${text} <small style="opacity:0.6">(${time})</small>`;
+    chatMessages.appendChild(div);
+  }
+
+  // Send message with username
+  sendBtn.addEventListener('click', () => {
+    if (chatInput.value.trim()) {
+      socket.emit('message', {
+        user: username,
+        text: chatInput.value.trim()
+      });
+      chatInput.value = '';
+    }
+  });
+
+  // Load latest announcement on page load
+  fetch("/announcement")
+    .then(res => res.json())
+    .then(data => {
+      if (data.text) {
+        announcementText.textContent = data.text;
+      }
+    });
+
+  // Listen for live announcements
+  socket.on('announcement', (text) => {
+    announcementText.textContent = text;
+
+    app.get("/panel", (req, res) => {
+  res.sendFile("panel.html", { root: "public" });
+});
+
+  });
+</script>
+</body>
+</html>

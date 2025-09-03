@@ -1,10 +1,11 @@
 import express from "express";
-import fs from "fs";
-import dotenv from "dotenv";
 import http from "http";
 import { Server } from "socket.io";
+import path from "path";
+import { fileURLToPath } from "url";
+import fs from "fs";
 import session from "express-session";
-import { bot, setIo } from "./bot.js";
+import dotenv from "dotenv";
 
 dotenv.config();
 
@@ -12,31 +13,34 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
 
-app.use(express.json());
-app.use(express.static("public"));
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
-// session middleware
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 app.use(
   session({
-    secret: process.env.SESSION_SECRET || "supersecret",
+    secret: process.env.SESSION_SECRET || "secret",
     resave: false,
-    saveUninitialized: false,
-    cookie: { maxAge: 1000 * 60 * 60 * 24 }, // 1 day
+    saveUninitialized: true,
   })
 );
 
-/* -------------------- KEYS -------------------- */
-const KEYS_FILE = "./keys.json";
+app.use(express.static(path.join(__dirname, "public")));
+
+// ------------------- KEYS -------------------
+const KEYS_FILE = path.join(__dirname, "keys.json");
 
 function loadKeys() {
   if (!fs.existsSync(KEYS_FILE)) return {};
-  return JSON.parse(fs.readFileSync(KEYS_FILE, "utf-8"));
+  return JSON.parse(fs.readFileSync(KEYS_FILE, "utf8"));
 }
+
 function saveKeys(keys) {
   fs.writeFileSync(KEYS_FILE, JSON.stringify(keys, null, 2));
 }
 
-/* -------------------- VERIFY LOGIN -------------------- */
+// ------------------- VERIFY -------------------
 app.post("/verify", (req, res) => {
   const { key, username } = req.body;
   const keys = loadKeys();
@@ -45,108 +49,76 @@ app.post("/verify", (req, res) => {
     keys[key].used = true;
     saveKeys(keys);
 
-    // store session
-    req.session.user = {
-      username: username || keys[key].user || "User",
-    };
+    // Store user in session
+    req.session.user = { username: username || "User" };
 
-    return res.json({ success: true, username: req.session.user.username });
+    return res.json({ success: true });
   }
   return res.status(400).json({ success: false, message: "Invalid key" });
 });
 
-/* -------------------- SESSION CHECK -------------------- */
+// ------------------- SESSION -------------------
 app.get("/session", (req, res) => {
   if (req.session.user) {
     return res.json({ loggedIn: true, user: req.session.user });
   }
-  return res.json({ loggedIn: false });
+  res.json({ loggedIn: false });
 });
 
-/* -------------------- CHAT -------------------- */
-const MESSAGES_MAX = 200;
-const messages = [];
-
-io.on("connection", (socket) => {
-  console.log("🟢 User connected");
-
-  socket.on("join", ({ username }) => {
-    socket.data.username = username || "User";
-    socket.emit("init", messages);
-  });
-
-socket.on("message", (data) => {
-  const clean = (data.text || "").toString().slice(0, 2000);
-  if (!clean.trim()) return;
-
-  const msg = {
-    id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
-    user: data.user || socket.data.username || "User",
-    text: clean,
-    time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-  };
-
-  messages.push(msg);
-  if (messages.length > MESSAGES_MAX) messages.shift();
-
-  io.emit("message", msg);
+// ------------------- PANEL -------------------
+app.get("/panel", (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "panel.html"));
 });
 
+// ------------------- ANNOUNCEMENTS -------------------
+let latestAnnouncement = "Welcome to the panel! Stay tuned for updates...";
 
-  socket.on("disconnect", () => {
-    console.log("🔴 User disconnected");
-  });
-});
-
-/* -------------------- CONNECT BOT TO IO -------------------- */
-setIo(io);
-
-/* -------------------- START SERVER -------------------- */
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-  console.log(`✅ Server + Socket.IO running: http://localhost:${PORT}`);
-});
-
-
-/* -------------------- ANNOUNCEMENTS -------------------- */
-const ANNOUNCEMENTS_FILE = "./announcements.json";
-let latestAnnouncement = "";
-
-// Load latest announcement on server start
-if (fs.existsSync(ANNOUNCEMENTS_FILE)) {
-  try {
-    const data = JSON.parse(fs.readFileSync(ANNOUNCEMENTS_FILE, "utf-8"));
-    latestAnnouncement = data.latest || "";
-  } catch (err) {
-    console.error("Failed to load announcements:", err);
-  }
-}
-
-// Expose latest announcement
 app.get("/announcement", (req, res) => {
   res.json({ text: latestAnnouncement });
 });
 
-export function SatanNouncement(text) {
-  latestAnnouncement = text;
-  io.emit("announcement", text);
-}
-// Save announcement to file
-function saveAnnouncement(text) {
-  fs.writeFileSync(
-    ANNOUNCEMENTS_FILE,
-    JSON.stringify({ latest: text }, null, 2)
-  );
-}
+app.post("/announce", (req, res) => {
+  const { text } = req.body;
+  if (text) {
+    latestAnnouncement = text;
+    io.emit("announcement", text);
+    return res.json({ success: true });
+  }
+  res.status(400).json({ success: false });
+});
 
-// Function bot.js calls when /announce is used
-export function setAnnouncement(text) {
-  latestAnnouncement = text;
+// ------------------- CHAT -------------------
+let chatHistory = [];
 
-  // Save to disk
-  saveAnnouncement(text);
+io.on("connection", (socket) => {
+  console.log("New client connected");
 
-  // Broadcast to all clients
-  io.emit("announcement", text);
-}
+  // Send chat history
+  socket.emit("init", chatHistory);
 
+  // Handle join
+  socket.on("join", ({ username }) => {
+    socket.username = username || "User";
+  });
+
+  // Handle message
+  socket.on("message", (text) => {
+    const msg = {
+      user: socket.username,
+      text,
+      time: new Date().toLocaleTimeString(),
+    };
+    chatHistory.push(msg);
+    io.emit("message", msg);
+  });
+
+  socket.on("disconnect", () => {
+    console.log("Client disconnected");
+  });
+});
+
+// ------------------- START -------------------
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => {
+  console.log(`✅ Server running on http://localhost:${PORT}`);
+});

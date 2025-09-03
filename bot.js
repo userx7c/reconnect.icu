@@ -1,14 +1,13 @@
-import fs from "fs";
 import TelegramBot from "node-telegram-bot-api";
+import fs from "fs";
 import dotenv from "dotenv";
-import { setAnnouncement } from "./server.js"; // ✅ correct import
+import { ioInstance } from "./server.js";
 
 dotenv.config();
 
 const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, { polling: true });
-const KEYS_FILE = "./keys.json";
 
-/* -------------------- LOAD KEYS -------------------- */
+const KEYS_FILE = "./keys.json";
 let keys = {};
 if (fs.existsSync(KEYS_FILE)) {
   keys = JSON.parse(fs.readFileSync(KEYS_FILE, "utf-8"));
@@ -22,15 +21,7 @@ function generateKey() {
   return Math.random().toString(36).substring(2, 10).toUpperCase();
 }
 
-/* -------------------- IO HOOK -------------------- */
-let ioInstance;
-export function setIo(io) {
-  ioInstance = io;
-}
-
-/* -------------------- BOT HANDLERS -------------------- */
-
-// /start command → show info + key button
+/* -------------------- START -------------------- */
 bot.onText(/\/start/, (msg) => {
   const chatId = msg.chat.id;
   const info = `
@@ -43,19 +34,17 @@ bot.onText(/\/start/, (msg) => {
 📛 Name: ${msg.from.first_name} ${msg.from.last_name || ""}
 
 Press the button below to generate your 1-time login key.
-  `;
+`;
 
   bot.sendMessage(chatId, info, {
     parse_mode: "Markdown",
     reply_markup: {
-      inline_keyboard: [
-        [{ text: "🔑 Generate Key", callback_data: "generate_key" }]
-      ],
+      inline_keyboard: [[{ text: "🔑 Generate Key", callback_data: "generate_key" }]],
     },
   });
 });
 
-// Handle "Generate Key" button
+/* -------------------- GENERATE KEY -------------------- */
 bot.on("callback_query", (query) => {
   const chatId = query.message.chat.id;
 
@@ -75,7 +64,7 @@ bot.on("callback_query", (query) => {
   }
 });
 
-// /announce command → only admin can send
+/* -------------------- ANNOUNCE -------------------- */
 bot.onText(/\/announce (.+)/, (msg, match) => {
   const chatId = msg.chat.id.toString();
   const adminId = process.env.TELEGRAM_ADMIN_ID;
@@ -84,11 +73,12 @@ bot.onText(/\/announce (.+)/, (msg, match) => {
     const announcement = match[1];
     bot.sendMessage(chatId, `📢 Announcement sent:\n${announcement}`);
 
-    // Persist + broadcast
-    setAnnouncement(announcement);
+    if (ioInstance) {
+      ioInstance.emit("announcement", announcement);
+    }
   } else {
     bot.sendMessage(chatId, "❌ You are not authorized to send announcements.");
   }
 });
 
-export { bot, keys, saveKeys };
+export { bot };
